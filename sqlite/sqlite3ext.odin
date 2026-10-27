@@ -371,6 +371,10 @@ Api_Routines :: struct {
 	str_free:       proc "c" (^Str),
 	carray_bind:    proc "c" (^Stmt, i32, rawptr, i32, i32, proc "c" (rawptr)) -> Result_Code,
 	carray_bind_v2: proc "c" (^Stmt, i32, rawptr, i32, i32, proc "c" (rawptr), rawptr) -> Result_Code,
+
+	/* Version 3.54.0 and later */
+	incomplete: proc "c" (cstring) -> i64,
+	result_str: proc "c" (^Context, ^Str, i32),
 }
 
 /*

@@ -64,12 +64,12 @@ import "core:c"
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-VERSION        :: "3.53.3"
-VERSION_NUMBER :: 3053003
-SOURCE_ID      :: "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62"
-SCM_BRANCH     :: "branch-3.53"
-SCM_TAGS       :: "release version-3.53.3"
-SCM_DATETIME   :: "2026-06-26T20:14:12.354Z"
+VERSION        :: "3.54.1"
+VERSION_NUMBER :: 3054001
+SOURCE_ID      :: "2026-10-16 14:45:20 555e07ef33f69a0957d24d8e555b702464a131d6f1607f4c3c1e4551e8e6ca76"
+SCM_BRANCH     :: "branch-3.54"
+SCM_TAGS       :: "release version-3.54.1"
+SCM_DATETIME   :: "2026-10-16T14:45:20.546Z"
 
 @(default_calling_convention="c", link_prefix="sqlite3_")
 foreign lib {
@@ -269,7 +269,7 @@ NOTFOUND    :: 12   /* Unknown opcode in sqlite3_file_control() */
 FULL        :: 13   /* Insertion failed because database is full */
 CANTOPEN    :: 14   /* Unable to open the database file */
 PROTOCOL    :: 15   /* Database lock protocol error */
-EMPTY       :: 16   /* Internal use only */
+EMPTY       :: 16   /* No content */
 SCHEMA      :: 17   /* The database schema changed */
 TOOBIG      :: 18   /* String or BLOB exceeds size limit */
 CONSTRAINT  :: 19   /* Abort due to constraint violation */
@@ -2395,8 +2395,9 @@ foreign lib {
 	** These routines are useful during command-line input to determine if the
 	** currently entered text seems to form a complete SQL statement or
 	** if additional input is needed before sending the text into
-	** SQLite for parsing.  ^These routines return 1 if the input string
-	** appears to be a complete SQL statement.  ^A statement is judged to be
+	** SQLite for parsing.  ^The sqlite3_complete(X) and sqlite3_complete16(X)
+	** routines return 1 if the input string X appears to be a complete SQL
+	** statement.  ^A statement is judged to be
 	** complete if it ends with a semicolon token and is not a prefix of a
 	** well-formed CREATE TRIGGER statement.  ^Semicolons that are embedded within
 	** string literals or quoted identifier names or comments are not
@@ -2404,11 +2405,25 @@ foreign lib {
 	** embedded) and thus do not count as a statement terminator.  ^Whitespace
 	** and comments that follow the final semicolon are ignored.
 	**
-	** ^These routines return 0 if the statement is incomplete.  ^If a
-	** memory allocation fails, then SQLITE_NOMEM is returned.
+	** ^The sqlite3_complete(X) and sqlite3_complete16(X) routines return 0
+	** if the statement is incomplete.  ^If a memory allocation fails, then
+	** SQLITE_NOMEM is returned.
 	**
-	** ^These routines do not parse the SQL statements and thus
-	** will not detect syntactically incorrect SQL.
+	** The [sqlite3_incomplete(X)] routine is similar to [sqlite3_complete(X)]
+	** except that sqlite3_incomplete(X) returns SQLITE_OK if the input X is
+	** complete, SQLITE_EMPTY if input X consists entirely of whitespace and/or
+	** comments, SQLITE_MISUSE if X is a NULL pointer, and some other non-zero
+	** value  if X is incomplete.  The non-zero return from
+	** sqlite3_incomplete(X) contains additional information about what is
+	** needed to complete the input X.  See the header comment on the
+	** implemenation of the sqlite3_incomplete() routine for a full description
+	** of its non-zero return values.  The sqlite3_incomplete(X) interface
+	** is only available for UTF-8 text.
+	**
+	** ^None of these routines do a full parse the SQL statements and thus
+	** will not detect syntactically incorrect SQL.  They only determine if
+	** input text has properly terminated comments, string literals, and
+	** quoted identifiers, and if the statement ends with a semicolon.
 	**
 	** ^(If SQLite has not been initialized using [sqlite3_initialize()] prior
 	** to invoking sqlite3_complete16() then sqlite3_initialize() is invoked
@@ -2416,14 +2431,15 @@ foreign lib {
 	** then the return value from sqlite3_complete16() will be non-zero
 	** regardless of whether or not the input SQL is complete.)^
 	**
-	** The input to [sqlite3_complete()] must be a zero-terminated
-	** UTF-8 string.
+	** The X input to [sqlite3_complete(X)] and [sqlite3_incomplete(X)]
+	** must be a zero-terminated UTF-8 string.
 	**
 	** The input to [sqlite3_complete16()] must be a zero-terminated
 	** UTF-16 string in native byte order.
 	*/
 	complete   :: proc(sql: cstring) -> i32 ---
 	complete16 :: proc(sql: rawptr) -> i32 ---
+	incomplete :: proc(sql: cstring) -> i64 ---
 
 	/*
 	** CAPI3REF: Register A Callback To Handle SQLITE_BUSY Errors
@@ -2832,7 +2848,7 @@ foreign lib {
 	**
 	** ^The first parameter to the authorizer callback is a copy of the third
 	** parameter to the sqlite3_set_authorizer() interface. ^The second parameter
-	** to the callback is an integer [SQLITE_COPY | action code] that specifies
+	** to the callback is an integer [SQLITE_READ | action code] that specifies
 	** the particular action to be authorized. ^The third through sixth parameters
 	** to the callback are either NULL pointers or zero-terminated strings
 	** that contain additional details about the action to be authorized.
@@ -2875,21 +2891,33 @@ foreign lib {
 	** previous call.)^  ^Disable the authorizer by installing a NULL callback.
 	** The authorizer is disabled by default.
 	**
-	** The authorizer callback must not do anything that will modify
+	** <h3>Limitations And Caveats</h3><ul>
+	**
+	** <li>The authorizer callback must not do anything that will modify
 	** the database connection that invoked the authorizer callback.
 	** Note that [sqlite3_prepare_v2()] and [sqlite3_step()] both modify their
 	** database connections for the meaning of "modify" in this paragraph.
 	**
-	** ^When [sqlite3_prepare_v2()] is used to prepare a statement, the
+	** <li>^When [sqlite3_prepare_v2()] is used to prepare a statement, the
 	** statement might be re-prepared during [sqlite3_step()] due to a
 	** schema change.  Hence, the application should ensure that the
 	** correct authorizer callback remains in place during the [sqlite3_step()].
 	**
-	** ^Note that the authorizer callback is invoked only during
+	** <li>^The authorizer callback is invoked only during
 	** [sqlite3_prepare()] or its variants.  Authorization is not
 	** performed during statement evaluation in [sqlite3_step()], unless
 	** as stated in the previous paragraph, sqlite3_step() invokes
 	** sqlite3_prepare_v2() to reprepare a statement after a schema change.
+	**
+	** <li>Authorizer callbacks for the expressions of a
+	** [generated column] are invoked when the schema is parsed (and specifically
+	** when the [CREATE TABLE] statement that contains the generated column is
+	** parsed) not when the generated column is used in a DML statement.
+	** This is deliberate, as one of the purposes of generated columns
+	** is to give schema designers the ability to provide gated access
+	** to privileged columns and/or functions.
+	**
+	** </ul>
 	*/
 	set_authorizer :: proc(_: ^Connection, xAuth: proc "c" (rawptr, i32, cstring, cstring, cstring, cstring) -> i32, pUserData: rawptr) -> Result_Code ---
 }
@@ -2927,6 +2955,11 @@ IGNORE :: 2   /* Don't allow access, but don't generate an error */
 ** is the name of the inner-most trigger or view that is responsible for
 ** the access attempt or NULL if this access attempt is directly from
 ** top-level SQL code.
+**
+** The case of strings in the 3rd through the 6th argument to the
+** authorization callback is arbitrary.  Authorization callbacks
+** implementations should use [sqlite3_stricmp()] or similar when
+** doing comparisons against those values.
 */
 /******************************************* 3rd ************ 4th ***********/
 CREATE_INDEX          :: 1   /* Index Name      Table Name      */
@@ -2961,7 +2994,6 @@ CREATE_VTABLE        :: 29   /* Table Name      Module Name     */
 DROP_VTABLE          :: 30   /* Table Name      Module Name     */
 FUNCTION             :: 31   /* NULL            Function Name   */
 SAVEPOINT            :: 32   /* Operation       Savepoint Name  */
-COPY                  :: 0   /* No longer used */
 RECURSIVE            :: 33   /* NULL            NULL            */
 
 @(default_calling_convention="c", link_prefix="sqlite3_")
@@ -3457,8 +3489,7 @@ foreign lib {
 	**
 	** The sqlite3_uri_int64(F,P,D) routine converts the value of P into a
 	** 64-bit signed integer and returns that integer, or D if P does not
-	** exist.  If the value of P is something other than an integer, then
-	** zero is returned.
+	** exist or if the value of P is something other than an integer.
 	**
 	** The sqlite3_uri_key(F,N) returns a pointer to the name (not
 	** the value) of the N-th query parameter for filename F, or a NULL
@@ -3793,6 +3824,14 @@ foreign lib {
 ** [[SQLITE_LIMIT_WORKER_THREADS]] ^(<dt>SQLITE_LIMIT_WORKER_THREADS</dt>
 ** <dd>The maximum number of auxiliary worker threads that a single
 ** [prepared statement] may start.</dd>)^
+**
+** [[SQLITE_LIMIT_SCHEMA]] ^(<dt>SQLITE_LIMIT_SCHEMA</dt>
+** <dd>The maximum number of objects (tables, indexes, triggers, and views)
+** defined by the database schema.</dd>)^
+**
+** [[SQLITE_LIMIT_TRIGGER_STEPS]] ^(<dt>SQLITE_LIMIT_TRIGGER_STEPS</dt>
+** <dd>The maximum number of SQL statements that can be contained within
+** a single trigger.</dd>)^
 ** </dl>
 */
 LIMIT_LENGTH                    :: 0
@@ -3808,6 +3847,8 @@ LIMIT_VARIABLE_NUMBER           :: 9
 LIMIT_TRIGGER_DEPTH            :: 10
 LIMIT_WORKER_THREADS           :: 11
 LIMIT_PARSER_DEPTH             :: 12
+LIMIT_SCHEMA                   :: 13
+LIMIT_TRIGGER_STEPS            :: 14
 
 /*
 ** CAPI3REF: Prepare Flags
@@ -3921,6 +3962,8 @@ foreign lib {
 	** the nul-terminator.
 	** Note that nByte measures the length of the input in bytes, not
 	** characters, even for the UTF-16 interfaces.
+	** For the sqlite3_prepare16() and sqlite3_prepare16_v2() interfaces,
+	** the nByte value must be even or undefined behavior can result.
 	**
 	** ^If pzTail is not NULL then *pzTail is made to point to the first byte
 	** past the end of the first SQL statement in zSql.  These routines only
@@ -4572,7 +4615,7 @@ foreign lib {
 	** [prepared statement].  ^In the "v2" interface,
 	** the more specific error code is returned directly by sqlite3_step().
 	**
-	** [SQLITE_MISUSE] means that the this routine was called inappropriately.
+	** [SQLITE_MISUSE] means that this routine was called inappropriately.
 	** Perhaps it was called on a [prepared statement] that has
 	** already been [sqlite3_finalize | finalized] or on one that had
 	** previously returned [SQLITE_ERROR] or [SQLITE_DONE].  Or it could
@@ -5695,7 +5738,11 @@ foreign lib {
 	**
 	** ^The sqlite3_result_zeroblob(C,N) and sqlite3_result_zeroblob64(C,N)
 	** interfaces set the result of the application-defined function to be
-	** a BLOB containing all zero bytes and N bytes in size.
+	** a BLOB containing all zero bytes and N bytes in size.  The
+	** zeroblob64(C,N) interface returns a [result code], which is normally
+	** [SQLITE_OK] but might be some other value if the requested operation
+	** could not be complete, for example if insufficient memory is available
+	** or if the value of N is out of range.
 	**
 	** ^The sqlite3_result_double() interface sets the result from
 	** an application-defined function to be a floating point value specified
@@ -7797,6 +7844,43 @@ foreign lib {
 	str_free   :: proc(^Str) ---
 
 	/*
+	** CAPI3REF: Return A Dynamic String From an SQL Function
+	**
+	** The [sqlite3_result_str(C,S,F)] interface causes the
+	** [sqlite3_str|dynamic string] S to become the return value for the
+	** application-defined function or virtual table that uses
+	** [sqlite3_context] C.  The F flag can be one of [SQLITE_COPY]
+	** or [SQLITE_XFER] or [SQLITE_FINISH].
+	**
+	** If the dynamic string is invalid or incomplete due to an out-of-memory
+	** or string-too-large error, then this routine transfers that error
+	** over to the SQL function.
+	**
+	** If the F argument is SQLITE_COPY, then a copy of the dynamic string
+	** content is made and the dynamic string object is unchanged.
+	** If the F argument is SQLITE_XFER, then ownership of the content
+	** in the dynamic is transferred to the SQL function (via a pointer copy
+	** rather than a string copy) and the dynamic string is reset to an
+	** empty string.  The SQLITE_FINISH value for F works like SQLITE_RESET
+	** except that it also invokes the [sqlite3_str_free(S)] destructor
+	** on the dynamic string object.
+	*/
+	result_str :: proc(^Context, ^Str, i32) ---
+}
+
+/*
+** CAPI3REF: Control Flags For sqlite3_result_str()
+**
+** The following integers can be used as the third "F" argument
+** to [sqlite3_result_str(C,S,F)].
+*/
+COPY   :: 0   /* Results copied.  Dynamic string unchanged */
+XFER   :: 1   /* Results transfered.  Dynamic string reset */
+FINISH :: 2   /* Like SQLITE_XFER, plus dynamic string freed */
+
+@(default_calling_convention="c", link_prefix="sqlite3_")
+foreign lib {
+	/*
 	** CAPI3REF: Add Content To A Dynamic String
 	** METHOD: sqlite3_str
 	**
@@ -9819,8 +9903,19 @@ foreign lib {
 	** used. The serialized database P is N bytes in size.  M is the size
 	** of the buffer P, which might be larger than N.  If M is larger than
 	** N, and the SQLITE_DESERIALIZE_READONLY bit is not set in F, then
-	** SQLite is permitted to add content to the in-memory database as
-	** long as the total size does not exceed M bytes.
+	** SQLite is permitted to add content to the in-memory database, in
+	** page-sized chunks, as long as the total size does not exceed M bytes.
+	**
+	** The parameter M must be greater than or equal to N.  Ideally, M
+	** should have a value which is N+(512&times;K)+20 where K determines how
+	** must extra space is available to hold new content as the database
+	** grows.  K can be 0 if the database is read-only.
+	**
+	** If the database content in P is malformed in a malicious way then
+	** it is possible that SQLite might try to read a few more than N bytes
+	** from P.  If the veracity of the database content P is uncertain,
+	** then applications are advised to allocate about 20 extra bytes on
+	** the end of the P buffer to avoid a memory error.
 	**
 	** If the SQLITE_DESERIALIZE_FREEONCLOSE bit is set in F, then SQLite will
 	** invoke sqlite3_free() on the serialization buffer when the database
